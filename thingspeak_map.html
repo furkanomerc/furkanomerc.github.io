@@ -3,53 +3,284 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ThingSpeak Harita</title>
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
+  <title>ThingSpeak Canlı Konum Takibi</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+  
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+  
   <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      background-color: #f0f4f8;
+      color: #333;
+      margin: 0;
+      padding: 20px;
+    }
+
+    h1 {
+      font-size: 28px;
+      color: #2c3e50;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    #menu {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      margin: 0 10px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #2980b9;
+    }
+
+    input[type="number"] {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      margin-left: 10px;
+      font-size: 14px;
+      width: 80px;
+      text-align: center;
+    }
+
     #map {
       height: 600px;
       width: 100%;
+      margin-top: 20px;
+      border-radius: 15px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    #info {
+      margin-top: 20px;
+      padding: 20px;
+      border: 1px solid #ddd;
+      background-color: white;
+      border-radius: 15px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+      max-width: 600px;
+      margin: 20px auto;
+    }
+
+    #timeline {
+      display: none;
+      margin-top: 20px;
+    }
+
+    ul {
+      padding: 0;
+      list-style-type: none;
+    }
+
+    li {
+      background-color: #ecf0f1;
+      padding: 10px;
+      border-radius: 10px;
+      margin-bottom: 10px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .fade-in {
+      animation: fadeIn 1.5s ease-in-out;
+    }
+
+    .leaflet-marker-icon {
+      border-radius: 50%; /* Yuvarlak kenarlar */
+      border: 2px solid #fff; /* Beyaz çerçeve */
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.5); /* Hafif gölge */
     }
   </style>
 </head>
 <body>
-  <h1>ThingSpeak GPS Verileri Haritası</h1>
-  <div id="map"></div>
+  <h1 class="fade-in">Canlı Konum Takibi</h1>
+  <div id="menu" class="fade-in">
+    <button onclick="showLiveTracking()">Anlık Konum</button>
+    <button onclick="showTimeline()">Zaman Çizelgesi</button>
+    <label for="dataCount">Gösterilecek Veri Sayısı:</label>
+    <input type="number" id="dataCount" value="20" min="1">
+    <button onclick="updateDataCount()">Güncelle</button>
+  </div>
+  <div id="map" class="fade-in"></div>
+  <div id="info" class="fade-in">
+    <h2>Konum Bilgisi</h2>
+    <p id="locationInfo">Bilgi yok</p>
+  </div>
+  <div id="timeline">
+    <h2>Son Konumların Zaman Çizelgesi</h2>
+    <ul id="locationHistory"></ul>
+  </div>
 
   <script>
-    const apiKey = 'QYMWFM4PCXLAFUII'; // Buraya ThingSpeak "Read API Key" değerini girin
-    const channelID = '2619304'; // Buraya ThingSpeak Kanal ID'sini girin
+    const apiKey = 'QYMWFM4PCXLAFUII'; // ThingSpeak "Read API Key"
+    const channelID = '2619304'; // ThingSpeak Kanal ID'si
+    const googleMapsApiKey = 'YOUR_GOOGLE_MAPS_API_KEY'; // Google Maps API Key
+    const speedThreshold = 50; // Hız eşiği (km/h) bu değerin üstündeki hızlara işaret koyulacak
 
-    const map = L.map('map').setView([0, 0], 2); // Başlangıçta Dünya Haritası
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    // Köpek imleci için özel simge tanımlaması
+    const dogIcon = L.icon({
+      iconUrl: 'https://raw.githubusercontent.com/furkanomerc/resim-deposu/refs/heads/main/DALL%C2%B7E%202024-10-19%2000.10.28%20-%20A%20cartoon-style%20cute%20Beagle%20puppy%2C%20sitting%20happily%20with%20floppy%20ears%2C%20big%20eyes%2C%20and%20a%20playful%20expression%2C%20colored%20brown%2C%20white%2C%20and%20black%2C%20with%20a%20light.webp', 
+      iconSize: [30, 30], // Simge boyutunu küçülttük
+      iconAnchor: [15, 30], // Simgenin ortasını imleç gibi hizalamak için anchor noktasını ayarladık
+      popupAnchor: [0, -30] // Popup balonunu simgenin üst kısmına yerleştiriyoruz
+    });
+
+    const map = L.map('map').setView([0, 0], 2); // Haritanın başlangıç noktası
+    L.tileLayer(`https://mt0.google.com/vt/lyrs=m&x={x}&y={y}&z={z}&key=${googleMapsApiKey}`, {
+      attribution: '&copy; <a href="https://maps.google.com">Google Maps</a> contributors'
     }).addTo(map);
 
-    async function getData() {
-      const response = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${apiKey}&results=100`);
+    let polylines = []; // Yol çizgileri için polyline dizisi
+    let marker; // Hareketli ikon için marker
+    let initialZoom = true; // İlk açılışta zoom yapılması gerektiğini belirlemek için
+    let liveTracking = true; // Anlık konum takibi mi olduğunu belirlemek için
+    let dataCount = 20; // Gösterilecek veri sayısı
+
+    function calculateBatteryPercentage(voltage) {
+      const minVoltage = 3.0;
+      const maxVoltage = 4.2;
+      const percentage = ((voltage - minVoltage) / (maxVoltage - minVoltage)) * 100;
+      return Math.max(0, Math.min(100, percentage.toFixed(0)));
+    }
+
+    async function getData(results = 1) {
+      const response = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${apiKey}&results=${results}`);
       const data = await response.json();
       return data.feeds;
     }
 
-    function addMarkers(feeds) {
-      feeds.forEach(feed => {
+    function showLiveTracking() {
+      document.getElementById('timeline').style.display = 'none'; // Zaman çizelgesini gizle
+      liveTracking = true; // Anlık konum moduna geç
+      clearPolylines(); // Geçmiş çizgileri temizle
+      refreshData(1); // Sadece anlık konumu göster
+    }
+
+    function showTimeline() {
+      document.getElementById('timeline').style.display = 'block'; // Zaman çizelgesini göster
+      liveTracking = false; // Zaman çizelgesi moduna geç
+      refreshData(dataCount); // Belirtilen sayıda son konumu getir
+    }
+
+    function updateDataCount() {
+      const input = document.getElementById('dataCount');
+      const count = parseInt(input.value, 10);
+      if (!isNaN(count) && count > 0) {
+        dataCount = count; // Gösterilecek veri sayısını güncelle
+        if (!liveTracking) {
+          refreshData(dataCount); // Zaman çizelgesi modundaysa verileri güncelle
+        }
+      } else {
+        alert('Lütfen geçerli bir sayı girin.');
+      }
+    }
+
+    function clearPolylines() {
+      polylines.forEach(polyline => map.removeLayer(polyline));
+      polylines = [];
+    }
+
+    function getColor(index, total) {
+      const ratio = index / total;
+      const r = Math.floor(255 * (1 - ratio));
+      const g = 0;
+      const b = Math.floor(255 * ratio);
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function updateMap(feeds) {
+      const locationInfo = document.getElementById('locationInfo');
+      const locationHistory = document.getElementById('locationHistory');
+      locationHistory.innerHTML = ''; // Eski verileri temizle
+
+      clearPolylines(); // Mevcut çizgileri temizle
+
+      feeds.forEach((feed, index) => {
         const lat = parseFloat(feed.field1);
         const lon = parseFloat(feed.field2);
+        const speed = parseFloat(feed.field5); // Hız verisini alıyoruz
+        const batteryVoltageRaw = parseFloat(feed.field4); // Ham batarya voltaj bilgisi
+        const batteryVoltage = batteryVoltageRaw / 1000; // Gerçek voltajı elde etmek için 1000'e böl
+        const batteryPercentage = calculateBatteryPercentage(batteryVoltage); // Yüzde hesaplama
+        const timestamp = new Date(feed.created_at).toLocaleString();
+
         if (!isNaN(lat) && !isNaN(lon)) {
-          L.marker([lat, lon]).addTo(map)
-            .bindPopup(`Latitude: ${lat}, Longitude: ${lon}`)
-            .openPopup();
+          if (!marker) {
+            marker = L.marker([lat, lon], { icon: dogIcon }).addTo(map); // Köpek simgesini kullan
+          } else {
+            marker.setLatLng([lat, lon]);
+          }
+
+          locationInfo.innerHTML = `Zaman: ${timestamp}<br>Latitude: ${lat}, Longitude: ${lon}<br>Batarya: ${batteryVoltage.toFixed(3)}V (%${batteryPercentage}), Hız: ${speed} km/h`;
+
+          if (!liveTracking && index > 0) {
+            const prevFeed = feeds[index - 1];
+            const prevLat = parseFloat(prevFeed.field1);
+            const prevLon = parseFloat(prevFeed.field2);
+            const color = getColor(index, feeds.length); // Renk hesaplama
+            const polyline = L.polyline([[prevLat, prevLon], [lat, lon]], { color: color }).addTo(map);
+            polylines.push(polyline);
+
+            const listItem = document.createElement('li');
+            listItem.textContent = `Zaman: ${timestamp}, Latitude: ${lat}, Longitude: ${lon}, Batarya: ${batteryVoltage.toFixed(3)}V (%${batteryPercentage}), Hız: ${speed} km/h`;
+            locationHistory.appendChild(listItem);
+          }
         }
       });
 
       if (feeds.length > 0) {
         const lastFeed = feeds[feeds.length - 1];
-        map.setView([parseFloat(lastFeed.field1), parseFloat(lastFeed.field2)], 13); // Son veriyi merkeze al
+        const lastLat = parseFloat(lastFeed.field1);
+        const lastLon = parseFloat(lastFeed.field2);
+        if (!isNaN(lastLat) && !isNaN(lastLon)) {
+          if (initialZoom) {
+            map.setView([lastLat, lastLon], 13); // Son konuma ve belirli bir yakınlaştırma seviyesine odaklan
+            initialZoom = false; // İlk yakınlaştırma yapıldıktan sonra bunu devre dışı bırak
+          } else {
+            map.panTo([lastLat, lastLon]); // Sadece harita merkezini hareket ettir
+          }
+        }
       }
     }
 
-    getData().then(feeds => addMarkers(feeds));
+    async function refreshData(results) {
+      const feeds = await getData(results);
+      updateMap(feeds);
+    }
+
+    setInterval(() => {
+      if (liveTracking) {
+        refreshData(1); // Anlık konum gösteriliyorsa güncelle
+      }
+    }, 5000); // Her 5 saniyede bir güncelle
+
+    showLiveTracking();
   </script>
 </body>
 </html>
